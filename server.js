@@ -70,8 +70,11 @@ app.post("/export", async (req, res) => {
     const sku = record[SKU_FIELD]?.value || "default";
     let templateFile = "quotation_template.xlsx";
 
+    if (sku === "SKU:008") templateFile = "BOOKS COSTING TEMPLATE.xlsx";
+    if (sku === "SKU:009")
+      templateFile = "BROCHURE GUIDE COSTING TEMPLATE.xlsx";
+    if (sku === "SKU:014") templateFile = "FLYERS GUIDE COSTING TEMPLATE.xlsx";
     if (sku === "SKU:017") templateFile = "MASS GUIDE COSTING TEMPLATE.xlsx";
-    if (sku === "SKU:002") templateFile = "ANOTHER TEMPLATE.xlsx";
 
     const templatePath = path.resolve(
       process.env.EXCEL_TEMPLATE_DIR || "./templates",
@@ -87,13 +90,35 @@ app.post("/export", async (req, res) => {
         const ws = workbook.getWorksheet(mapping.sheet);
         if (ws) {
           let value = record[fieldCode].value;
+          let handled = false;
 
-          if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-            const dateObj = new Date(value);
-            ws.getCell(mapping.cell).value = dateObj;
-            ws.getCell(mapping.cell).numFmt = "mmm dd, yyyy";
-          } else {
-            ws.getCell(mapping.cell).value = value;
+          // If mapping has custom extractor → use it
+          if (typeof mapping.extract === "function") {
+            const result = mapping.extract(
+              record[fieldCode].value,
+              ws,
+              mapping.cell,
+              mapping.concat || false
+            );
+            if (result === null) {
+              handled = true; // extractor already wrote to Excel
+            } else {
+              value = result;
+            }
+          }
+
+          if (!handled) {
+            // Handle dates
+            if (
+              typeof value === "string" &&
+              /^\d{4}-\d{2}-\d{2}$/.test(value)
+            ) {
+              const dateObj = new Date(value);
+              ws.getCell(mapping.cell).value = dateObj;
+              ws.getCell(mapping.cell).numFmt = "mmm dd, yyyy";
+            } else {
+              ws.getCell(mapping.cell).value = value;
+            }
           }
         } else {
           console.warn(`⚠️ Worksheet "${mapping.sheet}" not found`);
