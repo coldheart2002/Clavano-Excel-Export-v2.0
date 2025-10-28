@@ -15,14 +15,19 @@ const OFFSET_UNIT_PRICE_CELL = "P54";
 const CUSTOMER_NAME_FIELD = "customer_name";
 const SKU_FIELD = "sku";
 
-// ✅ Enable CORS for your Kintone domain
+// ✅ Enable CORS for your Kintone domain (handle both simple + preflight requests)
+const allowedOrigin = "https://clavano-printers.kintone.com";
+
 app.use(
   cors({
-    origin: "https://clavano-printers.kintone.com",
-    methods: ["GET", "POST"],
+    origin: allowedOrigin,
+    methods: ["GET", "POST", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
+
+// ✅ Explicitly handle preflight requests (important for Vercel)
+app.options("*", cors({ origin: allowedOrigin }));
 
 app.use(express.json());
 
@@ -36,11 +41,12 @@ async function fetchKintoneRecord(recordId) {
   return response.data.record;
 }
 
+// 🔹 Health check route
 app.get("/", async (req, res) => {
-  res.json({ success: true, message: "test successful" });
+  res.json({ success: true, message: "Server running successfully" });
 });
 
-// 🔹 API route for export
+// 🔹 Main export route
 app.post("/export", async (req, res) => {
   const { recordId } = req.body;
 
@@ -51,10 +57,10 @@ app.post("/export", async (req, res) => {
   try {
     console.log(`📥 Export requested for recordId: ${recordId}`);
 
-    // 1. Fetch record
+    // 1. Fetch record from Kintone
     const record = await fetchKintoneRecord(recordId);
 
-    // 2. Always use the same Excel template
+    // 2. Load Excel template
     const templateFile = "QUOTATION TEMPLATE.xlsx";
     const templatePath = path.resolve(
       process.env.EXCEL_TEMPLATE_DIR || "./templates",
@@ -64,7 +70,7 @@ app.post("/export", async (req, res) => {
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(templatePath);
 
-    // 3. Apply field mappings (Kintone -> Excel)
+    // 3. Apply field mappings (Kintone → Excel)
     for (const [fieldCode, mapping] of Object.entries(fieldToExcelMap)) {
       if (record[fieldCode]) {
         const ws = workbook.getWorksheet(mapping.sheet);
@@ -84,7 +90,6 @@ app.post("/export", async (req, res) => {
           }
 
           if (!handled) {
-            // Handle date fields
             if (
               typeof value === "string" &&
               /^\d{4}-\d{2}-\d{2}$/.test(value)
@@ -106,6 +111,14 @@ app.post("/export", async (req, res) => {
 
     // 4. Send Excel file to client
     const buffer = await workbook.xlsx.writeBuffer();
+
+    // ✅ Add explicit CORS headers before sending
+    res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Content-Type, Authorization"
+    );
     res.setHeader(
       "Content-Disposition",
       `attachment; filename="${templateFile}"`
@@ -114,12 +127,12 @@ app.post("/export", async (req, res) => {
       "Content-Type",
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     );
-    res.send(buffer);
 
-    console.log(`✅ ${templateFile} generated and downloaded`);
+    res.send(buffer);
+    console.log(`✅ ${templateFile} generated and sent successfully`);
   } catch (err) {
     console.error("❌ Export failed:", err.message);
-    res.status(500).json({ error: "Export failed" });
+    res.status(500).json({ error: "Export failed", details: err.message });
   }
 });
 
