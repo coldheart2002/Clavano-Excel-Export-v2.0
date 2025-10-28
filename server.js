@@ -9,27 +9,35 @@ const fieldToExcelMap = require("./mapping");
 const app = express();
 
 // ✅ CONFIGURABLE VARIABLES
-const SHEET_NAME = "COSTING  SHEET"; // Excel sheet name
+const SHEET_NAME = "COSTING SHEET"; // Excel sheet name
 const DIGITAL_UNIT_PRICE_CELL = "S54";
 const OFFSET_UNIT_PRICE_CELL = "P54";
 const CUSTOMER_NAME_FIELD = "customer_name";
 const SKU_FIELD = "sku";
 
-// ✅ Enable CORS for your Kintone domain (handle both simple + preflight requests)
+// ✅ Allowed origin (Kintone domain)
 const allowedOrigin = "https://clavano-printers.kintone.com";
 
+// ✅ Global CORS middleware (applies to ALL routes)
 app.use(
   cors({
     origin: allowedOrigin,
     methods: ["GET", "POST", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
   })
 );
 
-// ✅ Explicitly handle preflight requests (important for Vercel)
-app.options("*", cors({ origin: allowedOrigin }));
-
 app.use(express.json());
+
+// ✅ Explicitly handle preflight requests (important for Vercel)
+app.options("*", (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+  return res.sendStatus(204);
+});
 
 // 🔹 Fetch record from Kintone
 async function fetchKintoneRecord(recordId) {
@@ -42,12 +50,18 @@ async function fetchKintoneRecord(recordId) {
 }
 
 // 🔹 Health check route
-app.get("/", async (req, res) => {
+app.get("/", (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
   res.json({ success: true, message: "Server running successfully" });
 });
 
 // 🔹 Main export route
 app.post("/export", async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+
   const { recordId } = req.body;
 
   if (!recordId) {
@@ -109,16 +123,10 @@ app.post("/export", async (req, res) => {
       }
     }
 
-    // 4. Send Excel file to client
+    // 4. Generate Excel buffer
     const buffer = await workbook.xlsx.writeBuffer();
 
-    // ✅ Add explicit CORS headers before sending
-    res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.setHeader(
-      "Access-Control-Allow-Headers",
-      "Content-Type, Authorization"
-    );
+    // 5. Send Excel file
     res.setHeader(
       "Content-Disposition",
       `attachment; filename="${templateFile}"`
