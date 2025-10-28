@@ -7,24 +7,27 @@ const fieldToExcelMap = require("./mapping");
 
 const app = express();
 
-// ✅ CONFIG
+// ✅ Allowed Origin (Kintone domain)
 const allowedOrigin = "https://clavano-printers.kintone.com";
-const SHEET_NAME = "COSTING SHEET";
-const DIGITAL_UNIT_PRICE_CELL = "S54";
-const OFFSET_UNIT_PRICE_CELL = "P54";
-const CUSTOMER_NAME_FIELD = "customer_name";
-const SKU_FIELD = "sku";
 
 app.use(express.json());
 
-// ✅ Universal CORS Middleware — runs for ALL routes, even before OPTIONS
+// ✅ 1️⃣ Explicit preflight route — Vercel requires this
+app.options("/export", (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+  return res.status(204).end();
+});
+
+// ✅ 2️⃣ Global CORS middleware for all other routes
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", allowedOrigin);
   res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
   res.header("Access-Control-Allow-Credentials", "true");
 
-  // Immediately reply to preflight OPTIONS
   if (req.method === "OPTIONS") {
     return res.sendStatus(204);
   }
@@ -49,12 +52,11 @@ app.get("/", (req, res) => {
 
 // 🔹 Main export route
 app.post("/export", async (req, res) => {
-  const { recordId } = req.body;
-  if (!recordId) {
-    return res.status(400).json({ error: "recordId is required" });
-  }
-
   try {
+    const { recordId } = req.body;
+    if (!recordId)
+      return res.status(400).json({ error: "recordId is required" });
+
     console.log(`📥 Export requested for recordId: ${recordId}`);
 
     // 1. Fetch record from Kintone
@@ -74,10 +76,7 @@ app.post("/export", async (req, res) => {
     for (const [fieldCode, mapping] of Object.entries(fieldToExcelMap)) {
       if (!record[fieldCode]) continue;
       const ws = workbook.getWorksheet(mapping.sheet);
-      if (!ws) {
-        console.warn(`⚠️ Worksheet "${mapping.sheet}" not found`);
-        continue;
-      }
+      if (!ws) continue;
 
       let value = record[fieldCode].value;
       let handled = false;
@@ -107,7 +106,9 @@ app.post("/export", async (req, res) => {
     // 4. Generate Excel buffer
     const buffer = await workbook.xlsx.writeBuffer();
 
-    // 5. Send Excel file
+    // 5. Send file
+    res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
     res.setHeader(
       "Content-Disposition",
       `attachment; filename="${templateFile}"`
