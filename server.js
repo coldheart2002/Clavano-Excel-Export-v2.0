@@ -36,7 +36,7 @@ async function fetchKintoneRecord(recordId) {
   return response.data.record;
 }
 
-app.get("/test", async (req, res) => {
+app.get("/", async (req, res) => {
   res.json({ success: true, message: "test successful" });
 });
 
