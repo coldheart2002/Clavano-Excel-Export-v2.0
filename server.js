@@ -10,10 +10,10 @@ const app = express();
 
 // ✅ CONFIGURABLE VARIABLES
 const SHEET_NAME = "COSTING  SHEET"; // Excel sheet name
-const DIGITAL_UNIT_PRICE_CELL = "S54"; // cell for Digital Unit Price
-const OFFSET_UNIT_PRICE_CELL = "P54"; // cell for Offset Unit Price
-const CUSTOMER_NAME_FIELD = "customer_name"; // Kintone fieldCode for Customer Name
-const SKU_FIELD = "sku"; // Kintone fieldCode for SKU
+const DIGITAL_UNIT_PRICE_CELL = "S54";
+const OFFSET_UNIT_PRICE_CELL = "P54";
+const CUSTOMER_NAME_FIELD = "customer_name";
+const SKU_FIELD = "sku";
 
 // ✅ Enable CORS for your Kintone domain
 app.use(
@@ -36,22 +36,6 @@ async function fetchKintoneRecord(recordId) {
   return response.data.record;
 }
 
-// 🔹 Update record in Kintone
-async function updateKintoneRecord(recordId, fields) {
-  const url = `https://${process.env.KINTONE_DOMAIN}/k/v1/record.json`;
-  await axios.put(
-    url,
-    {
-      app: process.env.KINTONE_APP_ID,
-      id: recordId,
-      record: fields,
-    },
-    {
-      headers: { "X-Cybozu-API-Token": process.env.KINTONE_API_TOKEN },
-    }
-  );
-}
-
 // 🔹 API route for export
 app.post("/export", async (req, res) => {
   const { recordId } = req.body;
@@ -66,16 +50,8 @@ app.post("/export", async (req, res) => {
     // 1. Fetch record
     const record = await fetchKintoneRecord(recordId);
 
-    // 2. Determine template path based on SKU
-    const sku = record[SKU_FIELD]?.value || "default";
-    let templateFile = "quotation_template.xlsx";
-
-    if (sku === "SKU:008") templateFile = "BOOKS COSTING TEMPLATE.xlsx";
-    if (sku === "SKU:009")
-      templateFile = "BROCHURE GUIDE COSTING TEMPLATE.xlsx";
-    if (sku === "SKU:014") templateFile = "FLYERS GUIDE COSTING TEMPLATE.xlsx";
-    if (sku === "SKU:017") templateFile = "MASS GUIDE COSTING TEMPLATE.xlsx";
-
+    // 2. Always use the same Excel template
+    const templateFile = "QUOTATION TEMPLATE.xlsx";
     const templatePath = path.resolve(
       process.env.EXCEL_TEMPLATE_DIR || "./templates",
       templateFile
@@ -92,7 +68,6 @@ app.post("/export", async (req, res) => {
           let value = record[fieldCode].value;
           let handled = false;
 
-          // If mapping has custom extractor → use it
           if (typeof mapping.extract === "function") {
             const result = mapping.extract(
               record[fieldCode].value,
@@ -100,15 +75,12 @@ app.post("/export", async (req, res) => {
               mapping.cell,
               mapping.concat || false
             );
-            if (result === null) {
-              handled = true; // extractor already wrote to Excel
-            } else {
-              value = result;
-            }
+            if (result === null) handled = true;
+            else value = result;
           }
 
           if (!handled) {
-            // Handle dates
+            // Handle date fields
             if (
               typeof value === "string" &&
               /^\d{4}-\d{2}-\d{2}$/.test(value)
@@ -128,7 +100,7 @@ app.post("/export", async (req, res) => {
       }
     }
 
-    // 4. Send Excel file (default filename)
+    // 4. Send Excel file to client
     const buffer = await workbook.xlsx.writeBuffer();
     res.setHeader(
       "Content-Disposition",
@@ -140,7 +112,7 @@ app.post("/export", async (req, res) => {
     );
     res.send(buffer);
 
-    console.log(`✅ ${templateFile} generated and uploaded`);
+    console.log(`✅ ${templateFile} generated and downloaded`);
   } catch (err) {
     console.error("❌ Export failed:", err.message);
     res.status(500).json({ error: "Export failed" });
