@@ -3,40 +3,33 @@ const express = require("express");
 const ExcelJS = require("exceljs");
 const axios = require("axios");
 const path = require("path");
-const cors = require("cors");
 const fieldToExcelMap = require("./mapping");
 
 const app = express();
 
-// ✅ CONFIGURABLE VARIABLES
-const SHEET_NAME = "COSTING SHEET"; // Excel sheet name
+// ✅ CONFIG
+const allowedOrigin = "https://clavano-printers.kintone.com";
+const SHEET_NAME = "COSTING SHEET";
 const DIGITAL_UNIT_PRICE_CELL = "S54";
 const OFFSET_UNIT_PRICE_CELL = "P54";
 const CUSTOMER_NAME_FIELD = "customer_name";
 const SKU_FIELD = "sku";
 
-// ✅ Allowed origin (Kintone domain)
-const allowedOrigin = "https://clavano-printers.kintone.com";
-
-// ✅ Global CORS middleware (applies to ALL routes)
-app.use(
-  cors({
-    origin: allowedOrigin,
-    methods: ["GET", "POST", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-    credentials: true,
-  })
-);
-
 app.use(express.json());
 
-// ✅ Explicitly handle preflight requests (important for Vercel)
-app.options("*", (req, res) => {
-  res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  res.setHeader("Access-Control-Allow-Credentials", "true");
-  return res.sendStatus(204);
+// ✅ Universal CORS Middleware — runs for ALL routes, even before OPTIONS
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", allowedOrigin);
+  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.header("Access-Control-Allow-Credentials", "true");
+
+  // Immediately reply to preflight OPTIONS
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+
+  next();
 });
 
 // 🔹 Fetch record from Kintone
@@ -51,19 +44,12 @@ async function fetchKintoneRecord(recordId) {
 
 // 🔹 Health check route
 app.get("/", (req, res) => {
-  res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
   res.json({ success: true, message: "Server running successfully" });
 });
 
 // 🔹 Main export route
 app.post("/export", async (req, res) => {
-  res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  res.setHeader("Access-Control-Allow-Credentials", "true");
-
   const { recordId } = req.body;
-
   if (!recordId) {
     return res.status(400).json({ error: "recordId is required" });
   }
@@ -84,42 +70,37 @@ app.post("/export", async (req, res) => {
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(templatePath);
 
-    // 3. Apply field mappings (Kintone → Excel)
+    // 3. Apply field mappings
     for (const [fieldCode, mapping] of Object.entries(fieldToExcelMap)) {
-      if (record[fieldCode]) {
-        const ws = workbook.getWorksheet(mapping.sheet);
-        if (ws) {
-          let value = record[fieldCode].value;
-          let handled = false;
+      if (!record[fieldCode]) continue;
+      const ws = workbook.getWorksheet(mapping.sheet);
+      if (!ws) {
+        console.warn(`⚠️ Worksheet "${mapping.sheet}" not found`);
+        continue;
+      }
 
-          if (typeof mapping.extract === "function") {
-            const result = mapping.extract(
-              record[fieldCode].value,
-              ws,
-              mapping.cell,
-              mapping.concat || false
-            );
-            if (result === null) handled = true;
-            else value = result;
-          }
+      let value = record[fieldCode].value;
+      let handled = false;
 
-          if (!handled) {
-            if (
-              typeof value === "string" &&
-              /^\d{4}-\d{2}-\d{2}$/.test(value)
-            ) {
-              const dateObj = new Date(value);
-              ws.getCell(mapping.cell).value = dateObj;
-              ws.getCell(mapping.cell).numFmt = "mmm dd, yyyy";
-            } else {
-              ws.getCell(mapping.cell).value = value;
-            }
-          }
+      if (typeof mapping.extract === "function") {
+        const result = mapping.extract(
+          record[fieldCode].value,
+          ws,
+          mapping.cell,
+          mapping.concat || false
+        );
+        if (result === null) handled = true;
+        else value = result;
+      }
+
+      if (!handled) {
+        if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+          const dateObj = new Date(value);
+          ws.getCell(mapping.cell).value = dateObj;
+          ws.getCell(mapping.cell).numFmt = "mmm dd, yyyy";
         } else {
-          console.warn(`⚠️ Worksheet "${mapping.sheet}" not found`);
+          ws.getCell(mapping.cell).value = value;
         }
-      } else {
-        console.warn(`⚠️ Field "${fieldCode}" not found in record`);
       }
     }
 
