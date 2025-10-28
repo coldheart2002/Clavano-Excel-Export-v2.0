@@ -36,6 +36,10 @@ async function fetchKintoneRecord(recordId) {
   return response.data.record;
 }
 
+app.get("/test", async (req, res) => {
+  res.json({ success: true, message: "test successful" });
+});
+
 // 🔹 API route for export
 app.post("/export", async (req, res) => {
   const { recordId } = req.body;
