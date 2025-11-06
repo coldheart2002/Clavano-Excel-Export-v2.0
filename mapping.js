@@ -1,53 +1,68 @@
 // Map Kintone fieldCodes → Excel Sheet + Cell
 const fieldToExcelMap = {
-  date: { sheet: "INPUT DATA", cell: "B1" }, // Date
+  date: { sheet: "QUOTATION TEMPLATE", cell: "H11" }, // Date B1
+  quotationNo: { sheet: "QUOTATION TEMPLATE", cell: "Q11" }, // Quote No.
+  customer: { sheet: "QUOTATION TEMPLATE", cell: "H17" }, // Customer B3
+  address: { sheet: "QUOTATION TEMPLATE", cell: "H18" }, // Address B4
 
-  customer: { sheet: "INPUT DATA", cell: "B3" }, // Customer
-  address: { sheet: "INPUT DATA", cell: "B4" }, // Address
-
-  colour: { sheet: "INPUT DATA", cell: "B9" }, // No. of Side
-  contactPerson: { sheet: "INPUT DATA", cell: "B10" }, // Contact Person
+  colour: { sheet: "QUOTATION TEMPLATE", cell: "J25" }, // No. of Side B9
+  contactPerson: { sheet: "QUOTATION TEMPLATE", cell: "H13" }, // Contact Person B10
 
   contactNumber: {
-    sheet: "INPUT DATA",
-    cell: "B11",
+    sheet: "QUOTATION TEMPLATE",
+    cell: "H14",
     extract: (value, ws, cell) => {
       // Convert to number if possible
       const numericValue = Number(value);
       ws.getCell(cell).value = isNaN(numericValue) ? value : numericValue;
-      return null; // handled manually
+      return null;
     },
-  },
+  }, // Contact Number
 
-  emailAddress: { sheet: "INPUT DATA", cell: "B12" }, // Email Add
+  emailAddress: { sheet: "QUOTATION TEMPLATE", cell: "H15" }, // Email Add
 
-  paper: { sheet: "INPUT DATA", cell: "B18" }, // Cover-Front
+  paper: { sheet: "QUOTATION TEMPLATE", cell: "J24" }, // Cover-Front
 
   orderQuantity: {
-    sheet: "INPUT DATA",
-    cell: "B22",
+    sheet: "QUOTATION TEMPLATE",
+    cell: "P21",
     extract: (value, ws, cell) => {
       const numericValue = Number(value);
       ws.getCell(cell).value = isNaN(numericValue) ? value : numericValue;
       return null;
     },
-  },
+  }, // Order Quantity
 
-  itemDescription: { sheet: "INPUT DATA", cell: "B23" }, // Item Description
+  itemDescription: { sheet: "QUOTATION TEMPLATE", cell: "G21" }, // Item Description
 
-  size: { sheet: "INPUT DATA", cell: "B25" }, // Size
+  size: { sheet: "QUOTATION TEMPLATE", cell: "J23" }, // Size
 
-  unitPrice: {
-    sheet: "INPUT DATA",
-    cell: "B27",
+  officialUnitPrice: {
+    sheet: "QUOTATION TEMPLATE",
+    cell: "Q21",
     extract: (value, ws, cell) => {
       const numericValue = Number(value);
       ws.getCell(cell).value = isNaN(numericValue) ? value : numericValue;
       if (!isNaN(numericValue)) {
-        ws.getCell(cell).numFmt = "#,##0.00"; // Format as number with 2 decimals
+        ws.getCell(cell).numFmt = "#,##0.00";
       }
       return null;
     },
+  }, // Unit Price
+
+  totalAmount: {
+    sheet: "QUOTATION TEMPLATE",
+    cell: "R21",
+    extract: (value, ws, cell) => {
+      const numericValue = Number(value);
+      ws.getCell(cell).value = isNaN(numericValue) ? value : numericValue;
+      return null;
+    },
+  },
+
+  signature: {
+    sheet: "QUOTATION TEMPLATE",
+    cell: "G51",
   },
 };
 
