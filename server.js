@@ -66,41 +66,90 @@ app.post("/export", async (req, res) => {
 
     // 3. Apply field mappings (Kintone -> Excel)
     for (const [fieldCode, mapping] of Object.entries(fieldToExcelMap)) {
-      if (record[fieldCode]) {
-        const ws = workbook.getWorksheet(mapping.sheet);
-        if (ws) {
-          let value = record[fieldCode].value;
-          let handled = false;
-
-          if (typeof mapping.extract === "function") {
-            const result = mapping.extract(
-              record[fieldCode].value,
-              ws,
-              mapping.cell,
-              mapping.concat || false
-            );
-            if (result === null) handled = true;
-            else value = result;
-          }
-
-          if (!handled) {
-            // Handle date fields
-            if (
-              typeof value === "string" &&
-              /^\d{4}-\d{2}-\d{2}$/.test(value)
-            ) {
-              const dateObj = new Date(value);
-              ws.getCell(mapping.cell).value = dateObj;
-              ws.getCell(mapping.cell).numFmt = "mmm dd, yyyy";
-            } else {
-              ws.getCell(mapping.cell).value = value;
-            }
-          }
-        } else {
-          console.warn(`⚠️ Worksheet "${mapping.sheet}" not found`);
-        }
-      } else {
+      const field = record[fieldCode];
+      if (!field) {
         console.warn(`⚠️ Field "${fieldCode}" not found in record`);
+        continue;
+      }
+
+      const ws = workbook.getWorksheet(mapping.sheet);
+      if (!ws) {
+        console.warn(`⚠️ Worksheet "${mapping.sheet}" not found`);
+        continue;
+      }
+
+      // ✅ Handle image fields (like signature)
+      if (
+        mapping.isImage &&
+        Array.isArray(field.value) &&
+        field.value.length > 0
+      ) {
+        try {
+          const fileInfo = field.value[0]; // only use the first image
+          const fileKey = fileInfo.fileKey;
+
+          // Download image from Kintone
+          const fileUrl = `https://${process.env.KINTONE_DOMAIN}/k/v1/file.json?fileKey=${fileKey}`;
+          const imgResponse = await axios.get(fileUrl, {
+            responseType: "arraybuffer",
+            headers: { "X-Cybozu-API-Token": process.env.KINTONE_API_TOKEN },
+          });
+
+          // Convert binary image to ExcelJS image object
+          const imageId = workbook.addImage({
+            buffer: imgResponse.data,
+            extension: "png",
+          });
+
+          // Locate where to place the image
+          const cell = ws.getCell(mapping.cell);
+          const col = cell.col;
+          const row = cell.row;
+
+          // Determine image size (default fallback)
+          const imgWidth = mapping.width || 120;
+          const imgHeight = mapping.height || 50;
+
+          // Add image in fixed, uniform size
+          ws.addImage(imageId, {
+            tl: { col: col - 1, row: row - 1 }, // top-left anchor
+            ext: { width: imgWidth, height: imgHeight },
+          });
+
+          console.log(`🖋️ Added signature image at ${mapping.cell}`);
+          continue; // Skip normal text handling
+        } catch (imgErr) {
+          console.error(
+            `❌ Failed to add image for "${fieldCode}":`,
+            imgErr.message
+          );
+          continue;
+        }
+      }
+
+      // ✅ Handle normal text/number/date fields
+      let value = field.value;
+      let handled = false;
+
+      if (typeof mapping.extract === "function") {
+        const result = mapping.extract(
+          value,
+          ws,
+          mapping.cell,
+          mapping.concat || false
+        );
+        if (result === null) handled = true;
+        else value = result;
+      }
+
+      if (!handled) {
+        if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+          const dateObj = new Date(value);
+          ws.getCell(mapping.cell).value = dateObj;
+          ws.getCell(mapping.cell).numFmt = "mmm dd, yyyy";
+        } else {
+          ws.getCell(mapping.cell).value = value;
+        }
       }
     }
 

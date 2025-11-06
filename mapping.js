@@ -11,12 +11,12 @@ const fieldToExcelMap = {
   contactNumber: {
     sheet: "QUOTATION TEMPLATE",
     cell: "H14",
-    extract: (value, ws, cell) => {
-      // Convert to number if possible
-      const numericValue = Number(value);
-      ws.getCell(cell).value = isNaN(numericValue) ? value : numericValue;
-      return null;
-    },
+    // extract: (value, ws, cell) => {
+    //   // Convert to number if possible
+    //   const numericValue = Number(value);
+    //   ws.getCell(cell).value = isNaN(numericValue) ? value : numericValue;
+    //   return null;
+    // },
   }, // Contact Number
 
   emailAddress: { sheet: "QUOTATION TEMPLATE", cell: "H15" }, // Email Add
@@ -62,7 +62,24 @@ const fieldToExcelMap = {
 
   signature: {
     sheet: "QUOTATION TEMPLATE",
-    cell: "G51",
+    cell: "F49",
+    isImage: true,
+    width: 120, // width in pixels
+    height: 50, // height in pixels
+  },
+
+  Created_by: {
+    sheet: "QUOTATION TEMPLATE",
+    cell: "F52",
+    extract: (value, ws, cell) => {
+      // Some user fields return an array, some a single object
+      const name =
+        Array.isArray(value) && value.length > 0
+          ? value[0].name
+          : value.name || "";
+      ws.getCell(cell).value = name;
+      return null; // prevents default assignment
+    },
   },
 };
 
