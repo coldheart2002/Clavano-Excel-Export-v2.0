@@ -60,13 +60,13 @@ const fieldToExcelMap = {
     },
   },
 
-  // signature: {
-  //   sheet: "QUOTATION TEMPLATE",
-  //   cell: "F49",
-  //   isImage: true,
-  //   width: 120, // width in pixels
-  //   height: 50, // height in pixels
-  // },
+  signature: {
+    sheet: "QUOTATION TEMPLATE",
+    cell: "F49",
+    isImage: true,
+    width: 120, // width in pixels
+    height: 50, // height in pixels
+  },
 
   Created_by: {
     sheet: "QUOTATION TEMPLATE",
