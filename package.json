@@ -1,10 +1,10 @@
 {
   "name": "clavano-excel-export",
   "version": "1.0.0",
-  "main": "api/index.js",  
+  "main": "api/index.js",
   "scripts": {
-    "start": "node api/index.js",  
-    "dev": "nodemon api/index.js",  
+    "start": "node api/index.js",
+    "dev": "nodemon api/index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -17,6 +17,7 @@
     "dotenv": "^17.2.2",
     "exceljs": "^4.4.0",
     "express": "^5.1.0",
+    "nodemailer": "^7.0.10",
     "xlsx-calc": "^0.9.2"
   }
 }
