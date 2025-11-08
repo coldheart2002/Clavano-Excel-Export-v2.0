@@ -182,11 +182,8 @@ app.post("/export", async (req, res) => {
   }
 });
 
-// // 🔹 Start server
-// const PORT = process.env.PORT || 3000;
-// app.listen(PORT, () => {
-//   console.log(`🚀 Export server running at http://localhost:${PORT}`);
-// });
-
-// ✅ For Vercel deployment
-module.exports = app;
+// 🔹 Start server
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`🚀 Export server running at http://localhost:${PORT}`);
+});
