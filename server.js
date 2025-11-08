@@ -3,28 +3,37 @@ const express = require("express");
 const ExcelJS = require("exceljs");
 const axios = require("axios");
 const path = require("path");
-const cors = require("cors");
 const fieldToExcelMap = require("./mapping");
 
 const app = express();
 
-// ✅ CONFIGURABLE VARIABLES
-const SHEET_NAME = "COSTING  SHEET"; // Excel sheet name
-const DIGITAL_UNIT_PRICE_CELL = "S54";
-const OFFSET_UNIT_PRICE_CELL = "P54";
-const CUSTOMER_NAME_FIELD = "customer_name";
-const SKU_FIELD = "sku";
-
-// ✅ Enable CORS for your Kintone domain
-app.use(
-  cors({
-    origin: "https://clavano-printers.kintone.com",
-    methods: ["GET", "POST"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  })
-);
+// ✅ Allowed Origin (Kintone domain)
+const allowedOrigin = "https://clavano-printers.kintone.com";
 
 app.use(express.json());
+
+// ✅ 1️⃣ Explicit preflight route — Vercel requires this
+app.options("/export", (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+  return res.status(204).end();
+});
+
+// ✅ 2️⃣ Global CORS middleware for all other routes
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", allowedOrigin);
+  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.header("Access-Control-Allow-Credentials", "true");
+
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+
+  next();
+});
 
 // 🔹 Fetch record from Kintone
 async function fetchKintoneRecord(recordId) {
@@ -36,8 +45,9 @@ async function fetchKintoneRecord(recordId) {
   return response.data.record;
 }
 
-app.get("/", async (req, res) => {
-  res.json({ success: true, message: "test successful" });
+// 🔹 Health check route
+app.get("/", (req, res) => {
+  res.json({ success: true, message: "Server running successfully" });
 });
 
 // 🔹 API route for export
