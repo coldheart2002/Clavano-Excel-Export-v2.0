@@ -1,17 +1,22 @@
 require("dotenv").config();
 const express = require("express");
-const ExcelJS = require("exceljs");
-const axios = require("axios");
+const fs = require("fs");
 const path = require("path");
+const { PDFDocument, rgb } = require("pdf-lib");
+const fontkit = require("@pdf-lib/fontkit");
+const axios = require("axios");
 const nodemailer = require("nodemailer");
-const fieldToExcelMap = require("../mapping"); // adjust path if needed
+const fieldToPdfMap = require("../config/mappingPDF"); // PDF coordinates
 
 const app = express();
 const allowedOrigin = "https://clavano-printers.kintone.com";
 
 app.use(express.json());
 
-// Preflight CORS
+// Toggle for visualizing coordinates
+const SHOW_COORDINATES = false; // set true for mapping boxes
+
+// CORS setup
 app.options("/export", (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -25,7 +30,6 @@ app.use((req, res, next) => {
   res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
   res.header("Access-Control-Allow-Credentials", "true");
-
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 });
@@ -40,14 +44,11 @@ async function fetchKintoneRecord(recordId) {
   return response.data.record;
 }
 
-// Send email with attachment
+// Send email with PDF attachment
 async function sendEmail(toEmail, buffer, fileName) {
   const transporter = nodemailer.createTransport({
-    service: "gmail", // or SMTP
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS,
-    },
+    service: "gmail",
+    auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
   });
 
   await transporter.sendMail({
@@ -55,12 +56,7 @@ async function sendEmail(toEmail, buffer, fileName) {
     to: toEmail,
     subject: "Your Quotation",
     text: "Please find attached your quotation.",
-    attachments: [
-      {
-        filename: fileName,
-        content: buffer,
-      },
-    ],
+    attachments: [{ filename: fileName, content: buffer }],
   });
 }
 
@@ -70,94 +66,137 @@ app.post("/export", async (req, res) => {
   if (!recordId) return res.status(400).json({ error: "recordId required" });
 
   try {
-    console.log(`📥 Export requested for recordId: ${recordId}`);
     const record = await fetchKintoneRecord(recordId);
 
-    const templateFile = "QUOTATION TEMPLATE.xlsx";
     const templatePath = path.resolve(
-      process.env.EXCEL_TEMPLATE_DIR || "./templates",
-      templateFile
+      process.env.PDF_TEMPLATE_DIR || "./templates",
+      "QUOTATION TEMPLATE.pdf"
     );
+    const templateBytes = fs.readFileSync(templatePath);
+    const pdfDoc = await PDFDocument.load(templateBytes);
 
-    const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.readFile(templatePath);
+    // Register fontkit for custom fonts
+    pdfDoc.registerFontkit(fontkit);
 
-    // Apply mapping
-    for (const [fieldCode, mapping] of Object.entries(fieldToExcelMap)) {
+    // Embed Calibri font
+    const calibriPath = path.resolve(__dirname, "../fonts/Roboto-Regular.ttf");
+    const calibriBytes = fs.readFileSync(calibriPath);
+    const font = await pdfDoc.embedFont(calibriBytes);
+
+    const page = pdfDoc.getPages()[0];
+
+    // Fill fields
+    for (const [fieldCode, mapping] of Object.entries(fieldToPdfMap)) {
       const field = record[fieldCode];
       if (!field) continue;
-      const ws = workbook.getWorksheet(mapping.sheet);
-      if (!ws) continue;
 
-      // Handle image fields
+      // Draw visualization box if toggle is on
+      if (SHOW_COORDINATES) {
+        page.drawRectangle({
+          x: mapping.left,
+          y: page.getHeight() - mapping.top - mapping.height,
+          width: mapping.width,
+          height: mapping.height,
+          borderColor: rgb(1, 0, 0),
+          borderWidth: 1,
+          color: rgb(1, 1, 1, 0), // transparent
+        });
+
+        page.drawText(fieldCode, {
+          x: mapping.left + 2,
+          y: page.getHeight() - mapping.top - mapping.height / 2 - 4.5,
+          size: 1,
+          font: font,
+          color: rgb(1, 0, 0),
+        });
+        continue; // skip normal drawing while visualizing
+      }
+
+      // Handle images (signature)
       if (
         mapping.isImage &&
         Array.isArray(field.value) &&
         field.value.length > 0
       ) {
-        try {
-          const fileKey = field.value[0].fileKey;
-          const fileUrl = `https://${process.env.KINTONE_DOMAIN}/k/v1/file.json?fileKey=${fileKey}`;
-          const imgResp = await axios.get(fileUrl, {
-            responseType: "arraybuffer",
-            headers: { "X-Cybozu-API-Token": process.env.KINTONE_API_TOKEN },
-          });
-
-          const imageId = workbook.addImage({
-            buffer: imgResp.data,
-            extension: "png",
-          });
-
-          const cell = ws.getCell(mapping.cell);
-          ws.addImage(imageId, {
-            tl: { col: cell.col - 1, row: cell.row - 1 },
-            ext: { width: mapping.width || 120, height: mapping.height || 50 },
-          });
-
-          continue;
-        } catch (err) {
-          console.error(`❌ Image error for ${fieldCode}:`, err.message);
-          continue;
-        }
-      }
-
-      // Handle text/number/date fields
-      let value = field.value;
-      if (mapping.extract && typeof mapping.extract === "function") {
-        mapping.extract(value, ws, mapping.cell);
+        const fileKey = field.value[0].fileKey;
+        const fileUrl = `https://${process.env.KINTONE_DOMAIN}/k/v1/file.json?fileKey=${fileKey}`;
+        const imgResp = await axios.get(fileUrl, {
+          responseType: "arraybuffer",
+          headers: { "X-Cybozu-API-Token": process.env.KINTONE_API_TOKEN },
+        });
+        const pngImage = await pdfDoc.embedPng(imgResp.data);
+        page.drawImage(pngImage, {
+          x: mapping.left,
+          y: page.getHeight() - mapping.top - mapping.height,
+          width: mapping.width,
+          height: mapping.height,
+        });
         continue;
       }
 
-      // Default assignment
-      if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
-        ws.getCell(mapping.cell).value = new Date(value);
-        ws.getCell(mapping.cell).numFmt = "mmm dd, yyyy";
-      } else {
-        ws.getCell(mapping.cell).value = value;
+      // Handle text
+      let value = field.value;
+      if (typeof value === "object" && value.name) value = value.name;
+      if (Array.isArray(value) && value.length > 0)
+        value = value[0].name || value[0];
+      if (!value) continue;
+
+      // Format fields
+      if (fieldCode === "officialUnitPrice" || fieldCode === "totalAmount") {
+        const numericValue = Number(value);
+        if (!isNaN(numericValue)) {
+          value = `₱ ${numericValue.toLocaleString()}`;
+        } else {
+          value = `₱ ${value}`;
+        }
+      } else if (fieldCode === "orderQuantity") {
+        const numericValue = Number(value);
+        if (!isNaN(numericValue)) {
+          value = numericValue.toLocaleString();
+        }
+      } else if (fieldCode === "weight") {
+        const numericValue = Number(value);
+        if (!isNaN(numericValue)) {
+          value = `${numericValue} gsm`;
+        }
+      } else if (fieldCode === "date" && value) {
+        const dateObj = new Date(value);
+        if (!isNaN(dateObj)) {
+          const options = { month: "short", day: "numeric", year: "numeric" };
+          value = dateObj.toLocaleDateString("en-US", options); // 👉 e.g. Jan 26, 2002
+        }
+      } else if (fieldCode === "salesRepresentative") {
+        console.log(value);
       }
+
+      // Precise left-center alignment
+      const textHeight = font.heightAtSize(9);
+      page.drawText(String(value), {
+        x: mapping.left,
+        y: page.getHeight() - mapping.top - (mapping.height + textHeight) / 2,
+        size: 8,
+        font: font,
+        color: rgb(0, 0, 0),
+      });
     }
 
-    const buffer = await workbook.xlsx.writeBuffer();
+    const pdfBytes = await pdfDoc.save();
 
-    // Get client email from mapping
-    const clientEmailField = record.emailAddress?.value; // your mapping has 'emailAddress'
-    if (clientEmailField) {
-      await sendEmail(clientEmailField, buffer, "Quotation.xlsx");
-      console.log(`✅ Quotation emailed to ${clientEmailField}`);
+    // Email if emailAddress exists (optional)
+    const clientEmail = record.emailAddress?.value;
+    if (clientEmail) {
+      // await sendEmail(clientEmail, pdfBytes, "Quotation.pdf");
     }
 
-    // Send Excel for download
+    // Send PDF to client
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="Quotation.xlsx"`
+      `attachment; filename="Quotation.pdf"`
     );
-    res.setHeader(
-      "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    );
-    res.send(buffer);
+    res.setHeader("Content-Type", "application/pdf");
+    res.send(Buffer.from(pdfBytes));
   } catch (err) {
-    console.error("❌ Export failed:", err.message);
+    console.error("Export failed:", err.message);
     res.status(500).json({ error: "Export failed", details: err.message });
   }
 });
