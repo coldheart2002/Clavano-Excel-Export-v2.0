@@ -6,7 +6,7 @@ const { PDFDocument, rgb } = require("pdf-lib");
 const fontkit = require("@pdf-lib/fontkit");
 const axios = require("axios");
 const nodemailer = require("nodemailer");
-const fieldToPdfMap = require("../config/mappingPDF"); // PDF coordinates
+const getPdfMap = require("../config/mappingPDF"); // PDF coordinates
 
 const app = express();
 const allowedOrigin = "https://clavano-printers.kintone.com";
@@ -60,144 +60,153 @@ async function sendEmail(toEmail, buffer, fileName) {
   });
 }
 
+// Health check route
+app.get("/", (req, res) => {
+  res.json({
+    success: true,
+    message: "Server running successfully 🚀",
+  });
+});
+
 // Export route
 app.post("/export", async (req, res) => {
+  const type = req.query.type || "offset"; // default export type
+  console.log("Export type:", type);
+
+  const fieldToPdfMap = getPdfMap(type); // 👈 dynamic map based on type
+
   const { recordId } = req.body;
   if (!recordId) return res.status(400).json({ error: "recordId required" });
 
   try {
+    // Fetch Kintone record
     const record = await fetchKintoneRecord(recordId);
 
+    // Load PDF template
     const templatePath = path.resolve(
       process.env.PDF_TEMPLATE_DIR || "./templates",
       "QUOTATION TEMPLATE.pdf"
     );
     const templateBytes = fs.readFileSync(templatePath);
     const pdfDoc = await PDFDocument.load(templateBytes);
-
-    // Register fontkit for custom fonts
     pdfDoc.registerFontkit(fontkit);
 
-    // Embed Calibri font
-    const calibriPath = path.resolve(__dirname, "../fonts/Roboto-Regular.ttf");
-    const calibriBytes = fs.readFileSync(calibriPath);
-    const font = await pdfDoc.embedFont(calibriBytes);
+    // Load font
+    const fontPath = path.resolve(__dirname, "../fonts/Roboto-Regular.ttf");
+    const font = await pdfDoc.embedFont(fs.readFileSync(fontPath));
 
     const page = pdfDoc.getPages()[0];
 
-    // Fill fields
+    // Determine price fields based on export type
+    const priceFields =
+      type === "offset"
+        ? ["offset_unit_selling_price_official", "offset_total_amount"]
+        : ["digital_unit_selling_price_official", "digital_total_amount"];
+
+    // Loop through mapping
     for (const [fieldCode, mapping] of Object.entries(fieldToPdfMap)) {
       const field = record[fieldCode];
       if (!field) continue;
 
-      // Draw visualization box if toggle is on
-      if (SHOW_COORDINATES) {
-        page.drawRectangle({
-          x: mapping.left,
-          y: page.getHeight() - mapping.top - mapping.height,
-          width: mapping.width,
-          height: mapping.height,
-          borderColor: rgb(1, 0, 0),
-          borderWidth: 1,
-          color: rgb(1, 1, 1, 0), // transparent
-        });
+      // ----------------------------------------------------------------------------
+      // Handle signature IMAGE
+      // ----------------------------------------------------------------------------
+      if (mapping.isImage) {
+        if (Array.isArray(field.value) && field.value.length > 0) {
+          const fileKey = field.value[0].fileKey;
+          const fileUrl = `https://${process.env.KINTONE_DOMAIN}/k/v1/file.json?fileKey=${fileKey}`;
 
-        page.drawText(fieldCode, {
-          x: mapping.left + 2,
-          y: page.getHeight() - mapping.top - mapping.height / 2 - 4.5,
-          size: 1,
-          font: font,
-          color: rgb(1, 0, 0),
-        });
-        continue; // skip normal drawing while visualizing
-      }
+          const imgResp = await axios.get(fileUrl, {
+            responseType: "arraybuffer",
+            headers: { "X-Cybozu-API-Token": process.env.KINTONE_API_TOKEN },
+          });
 
-      // Handle images (signature)
-      if (
-        mapping.isImage &&
-        Array.isArray(field.value) &&
-        field.value.length > 0
-      ) {
-        const fileKey = field.value[0].fileKey;
-        const fileUrl = `https://${process.env.KINTONE_DOMAIN}/k/v1/file.json?fileKey=${fileKey}`;
-        const imgResp = await axios.get(fileUrl, {
-          responseType: "arraybuffer",
-          headers: { "X-Cybozu-API-Token": process.env.KINTONE_API_TOKEN },
-        });
-        const pngImage = await pdfDoc.embedPng(imgResp.data);
-        page.drawImage(pngImage, {
-          x: mapping.left,
-          y: page.getHeight() - mapping.top - mapping.height,
-          width: mapping.width,
-          height: mapping.height,
-        });
+          const pngImage = await pdfDoc.embedPng(imgResp.data);
+
+          page.drawImage(pngImage, {
+            x: mapping.left,
+            y: page.getHeight() - mapping.top - mapping.height,
+            width: mapping.width,
+            height: mapping.height,
+          });
+        }
         continue;
       }
 
-      // Handle text
+      // ----------------------------------------------------------------------------
+      // Handle TEXT FIELDS
+      // ----------------------------------------------------------------------------
       let value = field.value;
-      if (typeof value === "object" && value.name) value = value.name;
-      if (Array.isArray(value) && value.length > 0)
+
+      // Normalize dropdown/user fields
+      if (typeof value === "object" && value !== null && value.name) {
+        value = value.name;
+      }
+
+      if (Array.isArray(value) && value.length > 0) {
         value = value[0].name || value[0];
+      }
+
       if (!value) continue;
 
-      // Format fields
-      if (fieldCode === "officialUnitPrice" || fieldCode === "totalAmount") {
+      // Format PRICE fields dynamically
+      if (priceFields.includes(fieldCode)) {
         const numericValue = Number(value);
         if (!isNaN(numericValue)) {
-          value = `₱ ${numericValue.toLocaleString()}`;
+          value = `₱ ${numericValue.toLocaleString(undefined, {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          })}`;
         } else {
           value = `₱ ${value}`;
         }
-      } else if (fieldCode === "orderQuantity") {
-        const numericValue = Number(value);
-        if (!isNaN(numericValue)) {
-          value = numericValue.toLocaleString();
-        }
-      } else if (fieldCode === "weight") {
-        const numericValue = Number(value);
-        if (!isNaN(numericValue)) {
-          value = `${numericValue} gsm`;
-        }
-      } else if (fieldCode === "date" && value) {
-        const dateObj = new Date(value);
-        if (!isNaN(dateObj)) {
-          const options = { month: "short", day: "numeric", year: "numeric" };
-          value = dateObj.toLocaleDateString("en-US", options); // 👉 e.g. Jan 26, 2002
-        }
-      } else if (fieldCode === "salesRepresentative") {
-        console.log(value);
       }
 
-      // Precise left-center alignment
+      // Format date
+      if (fieldCode === "date") {
+        const d = new Date(value);
+        if (!isNaN(d)) {
+          value = d.toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+          });
+        }
+      }
+
+      // Format order qty
+      if (fieldCode === "order_qty") {
+        const n = Number(value);
+        if (!isNaN(n)) value = n.toLocaleString();
+      }
+
+      // Draw text
       const textHeight = font.heightAtSize(9);
+
       page.drawText(String(value), {
         x: mapping.left,
         y: page.getHeight() - mapping.top - (mapping.height + textHeight) / 2,
-        size: 8,
-        font: font,
+        size: 6,
+        font,
         color: rgb(0, 0, 0),
       });
     }
 
+    // Save final PDF
     const pdfBytes = await pdfDoc.save();
 
-    // Email if emailAddress exists (optional)
-    const clientEmail = record.emailAddress?.value;
-    if (clientEmail) {
-      // await sendEmail(clientEmail, pdfBytes, "Quotation.pdf");
-    }
-
-    // Send PDF to client
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="Quotation.pdf"`
+      `attachment; filename="Quotation_${type}.pdf"`
     );
     res.setHeader("Content-Type", "application/pdf");
     res.send(Buffer.from(pdfBytes));
   } catch (err) {
     console.error("Export failed:", err.message);
-    res.status(500).json({ error: "Export failed", details: err.message });
+    res.status(500).json({
+      error: "Export failed",
+      details: err.message,
+    });
   }
 });
 
