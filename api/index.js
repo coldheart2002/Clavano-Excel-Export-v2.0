@@ -70,31 +70,57 @@ app.get("/", (req, res) => {
 
 // Export route
 app.post("/export", async (req, res) => {
-  const type = req.query.type || "offset"; // default export type
+  const type = req.query.type || "offset";
   console.log("Export type:", type);
 
-  const fieldToPdfMap = getPdfMap(type); // 👈 dynamic map based on type
-
+  const fieldToPdfMap = getPdfMap(type);
   const { recordId } = req.body;
+
   if (!recordId) return res.status(400).json({ error: "recordId required" });
 
   try {
     // Fetch Kintone record
     const record = await fetchKintoneRecord(recordId);
 
-    // Load PDF template
-    const templatePath = path.resolve(
-      process.env.PDF_TEMPLATE_DIR || "./templates",
+    // Load PDF template - FIXED PATH for Vercel
+    const templatePath = path.join(
+      process.cwd(),
+      process.env.PDF_TEMPLATE_DIR || "templates",
       "QUOTATION TEMPLATE.pdf"
     );
+
+    // Check if template file exists
+    if (!fs.existsSync(templatePath)) {
+      console.error("Template not found at:", templatePath);
+      console.error(
+        "Current directory contents:",
+        fs.readdirSync(process.cwd())
+      );
+      return res.status(500).json({
+        error: "Template file not found",
+        path: templatePath,
+        cwd: process.cwd(),
+        files: fs.readdirSync(process.cwd()).join(", "),
+      });
+    }
+
     const templateBytes = fs.readFileSync(templatePath);
     const pdfDoc = await PDFDocument.load(templateBytes);
     pdfDoc.registerFontkit(fontkit);
 
-    // Load font
-    const fontPath = path.resolve(__dirname, "../fonts/Roboto-Regular.ttf");
-    const font = await pdfDoc.embedFont(fs.readFileSync(fontPath));
+    // Load font - FIXED PATH for Vercel
+    const fontPath = path.join(process.cwd(), "fonts", "Roboto-Regular.ttf");
 
+    // Check if font file exists
+    if (!fs.existsSync(fontPath)) {
+      console.error("Font not found at:", fontPath);
+      return res.status(500).json({
+        error: "Font file not found",
+        path: fontPath,
+      });
+    }
+
+    const font = await pdfDoc.embedFont(fs.readFileSync(fontPath));
     const page = pdfDoc.getPages()[0];
 
     // Determine price fields based on export type
@@ -108,34 +134,38 @@ app.post("/export", async (req, res) => {
       const field = record[fieldCode];
       if (!field) continue;
 
-      // ----------------------------------------------------------------------------
       // Handle signature IMAGE
-      // ----------------------------------------------------------------------------
       if (mapping.isImage) {
         if (Array.isArray(field.value) && field.value.length > 0) {
           const fileKey = field.value[0].fileKey;
           const fileUrl = `https://${process.env.KINTONE_DOMAIN}/k/v1/file.json?fileKey=${fileKey}`;
 
-          const imgResp = await axios.get(fileUrl, {
-            responseType: "arraybuffer",
-            headers: { "X-Cybozu-API-Token": process.env.KINTONE_API_TOKEN },
-          });
+          try {
+            const imgResp = await axios.get(fileUrl, {
+              responseType: "arraybuffer",
+              headers: { "X-Cybozu-API-Token": process.env.KINTONE_API_TOKEN },
+            });
 
-          const pngImage = await pdfDoc.embedPng(imgResp.data);
+            const pngImage = await pdfDoc.embedPng(imgResp.data);
 
-          page.drawImage(pngImage, {
-            x: mapping.left,
-            y: page.getHeight() - mapping.top - mapping.height,
-            width: mapping.width,
-            height: mapping.height,
-          });
+            page.drawImage(pngImage, {
+              x: mapping.left,
+              y: page.getHeight() - mapping.top - mapping.height,
+              width: mapping.width,
+              height: mapping.height,
+            });
+          } catch (imgError) {
+            console.error(
+              `Failed to load image for field ${fieldCode}:`,
+              imgError.message
+            );
+            // Continue with other fields even if image fails
+          }
         }
         continue;
       }
 
-      // ----------------------------------------------------------------------------
       // Handle TEXT FIELDS
-      // ----------------------------------------------------------------------------
       let value = field.value;
 
       // Normalize dropdown/user fields
@@ -203,13 +233,14 @@ app.post("/export", async (req, res) => {
     res.send(Buffer.from(pdfBytes));
   } catch (err) {
     console.error("Export failed:", err.message);
+    console.error("Stack trace:", err.stack);
     res.status(500).json({
       error: "Export failed",
       details: err.message,
+      stack: err.stack,
     });
   }
 });
-
 module.exports = app;
 
 if (require.main === module) {
