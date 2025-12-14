@@ -60,11 +60,11 @@ async function sendEmail(toEmail, buffer, fileName) {
   });
 }
 
-// Health check route
+// Health-check + show which Kintone app we’re wired to
 app.get("/", (req, res) => {
   res.json({
     success: true,
-    message: "Server running successfully 🚀",
+    message: `Connected to Kintone app ${process.env.KINTONE_APP_ID} and ready for queries 🚀`,
   });
 });
 
